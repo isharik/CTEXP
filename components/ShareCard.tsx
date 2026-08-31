@@ -49,51 +49,53 @@ export default function ShareCard({
   async function onShare() {
     if (busy) return;
     setBusy('share');
+
+    // This has to happen synchronously, before any `await`. Browsers only
+    // trust window.open() as user-initiated while it's still in the same
+    // tick as the click — once we await anything (rendering the card,
+    // clipboard writes), a later window.open() gets silently blocked as a
+    // popup. That silent block was why nothing happened on click.
+    window.open(intentUrl, '_blank', 'noopener,noreferrer');
+
     try {
       const blob = await toBlob();
-      const file = blob
-        ? new File([blob], `ct-human-${result.username}.png`, { type: 'image/png' })
-        : null;
+      if (!blob) return;
 
-      // Mobile: the native share sheet can carry the card image + text together.
+      const file = new File([blob], `ct-human-${result.username}.png`, {
+        type: 'image/png',
+      });
+
+      // Mobile: if the OS share sheet can take the image directly, prefer
+      // that — the X tab we already opened is still there as a fallback if
+      // the user dismisses the sheet instead.
       const nav = navigator as Navigator & {
         canShare?: (d: ShareData) => boolean;
       };
-      if (file && nav.share && nav.canShare?.({ files: [file] })) {
+      if (nav.share && nav.canShare?.({ files: [file] })) {
         try {
           await nav.share({ files: [file], text: tweet, url: shareUrl });
           return;
         } catch {
-          // user dismissed the sheet — fall through to the X composer
+          /* user dismissed the native sheet */
         }
       }
 
       // Desktop: put the card on the clipboard so it can be pasted straight
-      // into the tweet, then open X with the post prefilled.
-      let clipped = false;
-      if (blob && typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
+      // into the tweet that's already open.
+      if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
         try {
-          await navigator.clipboard.write([
-            new ClipboardItem({ 'image/png': blob }),
-          ]);
-          clipped = true;
+          await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+          setHint('X is open — paste the card into your post with Ctrl / ⌘ + V');
+          setTimeout(() => setHint(null), 6000);
+          return;
         } catch {
           /* clipboard image write not permitted */
         }
       }
 
-      window.open(intentUrl, '_blank', 'noopener,noreferrer');
-
-      if (clipped) {
-        setHint('X is open with your post — paste the card with Ctrl / ⌘ + V');
-      } else {
-        // Couldn't reach the clipboard — hand them the file instead.
-        if (blob) downloadBlob(blob, `ct-human-${result.username}.png`);
-        setHint('X is open with your post — attach the card we just saved for you');
-      }
+      downloadBlob(blob, `ct-human-${result.username}.png`);
+      setHint('X is open — attach the card we just saved for you');
       setTimeout(() => setHint(null), 6000);
-    } catch {
-      window.open(intentUrl, '_blank', 'noopener,noreferrer');
     } finally {
       setBusy(null);
     }
