@@ -65,9 +65,6 @@ const config: Config = {
           '0%, 100%': { transform: 'rotateX(10deg) rotateY(-12deg)' },
           '50%': { transform: 'rotateX(16deg) rotateY(12deg)' },
         },
-        sweep: {
-          to: { strokeDashoffset: '-1000' },
-        },
         track: {
           '0%': { transform: 'translateX(-110%)' },
           '100%': { transform: 'translateX(340%)' },
@@ -75,6 +72,12 @@ const config: Config = {
         eq: {
           '0%, 100%': { transform: 'scaleY(0.35)' },
           '50%': { transform: 'scaleY(1)' },
+        },
+        comet: {
+          '0%': { left: '-4%', opacity: '0' },
+          '8%': { opacity: '1' },
+          '90%': { opacity: '1' },
+          '100%': { left: '104%', opacity: '0' },
         },
       },
       animation: {
@@ -85,9 +88,9 @@ const config: Config = {
         countpulse: 'countpulse 2s ease-in-out infinite',
         aura: 'aura 4s ease-in-out infinite',
         wobble3d: 'wobble3d 9s ease-in-out infinite',
-        sweep: 'sweep 4.5s linear infinite',
         track: 'track 2.8s ease-in-out infinite',
         eq: 'eq 1.1s ease-in-out infinite',
+        comet: 'comet 3.4s linear infinite',
       },
     },
   },

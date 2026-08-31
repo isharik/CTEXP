@@ -5,9 +5,22 @@ import { useCallback, useEffect, useRef } from 'react';
 /**
  * Kinetic grid background — a warping node/line lattice that bends toward the
  * cursor and ripples on click. Adapted to the CT Human Experiment palette
- * (void black base, signal-red activation, restrained white) and rendered at
- * device resolution so it stays crisp. Sits behind all content; input is read
- * at the window level, so the canvas itself stays pointer-transparent.
+ * (void black base, signal-red activation, restrained white).
+ *
+ * Perf notes (this runs on every page, continuously, so it sets the floor for
+ * how the whole app feels):
+ * - The dot texture is baked once into a CanvasPattern and blitted with a
+ *   single fillRect, instead of thousands of individual arc() calls a frame.
+ * - Grid lines and nodes are batched into a handful of Path2D objects
+ *   (bucketed by proximity) so each frame does ~10 stroke/fill calls instead
+ *   of ~1800 individual draw calls with a state change on every one.
+ * - No per-node CanvasGradient is created — those are one of the more
+ *   expensive canvas ops and were being allocated for every "active" node,
+ *   every frame. Glow is now a flat low-alpha circle, batched the same way.
+ * - Device pixel ratio is capped lower and the cell size is larger, both of
+ *   which cut the raw amount of drawing work regardless of the above.
+ * - The draw pass itself is capped to ~45fps; pointer easing still runs every
+ *   rAF so tracking stays smooth, only the (expensive) redraw is throttled.
  */
 
 interface Point {
@@ -22,14 +35,17 @@ interface Ripple {
   born: number;
 }
 
-const CELL_SIZE = 56;
+const CELL_SIZE = 100;
 const INFLUENCE_RADIUS = 260;
 const MAX_WARP = 24;
-const DOT_SPACING = 28;
+const DOT_SPACING = 30;
 const LERP_SPEED = 0.09;
+const MAX_DPR = 1.5;
+const FRAME_INTERVAL = 1000 / 45; // cap the (expensive) draw pass, not input tracking
 
 const NODE_BASE_RADIUS = 1.6;
 const NODE_ACTIVE_RADIUS = 3.2;
+const BUCKETS = 5;
 
 // CT palette
 const BG = '#080809';
@@ -54,6 +70,12 @@ function lerpColor(
   const a = lerpN(base.a, active.a, t);
   return `rgba(${r},${g},${b},${a.toFixed(3)})`;
 }
+function smoothstep(t: number) {
+  return t * t * (3 - 2 * t);
+}
+function bucketOf(t: number) {
+  return Math.min(BUCKETS - 1, Math.floor(t * BUCKETS));
+}
 
 export default function LiveBackground() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -62,6 +84,8 @@ export default function LiveBackground() {
   const ripplesRef = useRef<Ripple[]>([]);
   const rafRef = useRef<number>(0);
   const sizeRef = useRef({ w: 0, h: 0 });
+  const dotPatternRef = useRef<CanvasPattern | null>(null);
+  const lastDrawRef = useRef(0);
 
   const getWarpedPoint = useCallback(
     (
@@ -135,14 +159,11 @@ export default function LiveBackground() {
       ctx.fillStyle = BG;
       ctx.fillRect(0, 0, W, H);
 
-      // Static dot texture
-      ctx.fillStyle = 'rgba(233,233,228,0.04)';
-      for (let x = DOT_SPACING / 2; x < W; x += DOT_SPACING) {
-        for (let y = DOT_SPACING / 2; y < H; y += DOT_SPACING) {
-          ctx.beginPath();
-          ctx.arc(x, y, 0.7, 0, Math.PI * 2);
-          ctx.fill();
-        }
+      // Static dot texture — one fillRect via a cached tiled pattern instead
+      // of thousands of individual arcs.
+      if (dotPatternRef.current) {
+        ctx.fillStyle = dotPatternRef.current;
+        ctx.fillRect(0, 0, W, H);
       }
 
       // Advance ripples
@@ -180,48 +201,54 @@ export default function LiveBackground() {
         }
       }
 
-      const drawSeg = (p1: Point, p2: Point, pr1: number, pr2: number) => {
-        const avg = (pr1 + pr2) / 2;
-        const t = avg * avg * (3 - 2 * avg);
-        ctx.beginPath();
-        ctx.moveTo(p1.x, p1.y);
-        ctx.lineTo(p2.x, p2.y);
-        ctx.strokeStyle = lerpColor(LINE_BASE, LINE_ACTIVE, t);
-        ctx.lineWidth = lerpN(0.8, 1.5, t);
-        ctx.stroke();
+      // Batch every line segment into one Path2D per proximity bucket, so the
+      // whole grid draws with a handful of stroke() calls instead of one per
+      // segment (each of which used to also force a strokeStyle change).
+      const linePaths: Path2D[] = Array.from({ length: BUCKETS }, () => new Path2D());
+      const addSeg = (p1: Point, p2: Point, pr1: number, pr2: number) => {
+        const t = smoothstep((pr1 + pr2) / 2);
+        const path = linePaths[bucketOf(t)];
+        path.moveTo(p1.x, p1.y);
+        path.lineTo(p2.x, p2.y);
       };
-
-      ctx.lineCap = 'butt';
       for (let row = 0; row < rows; row++)
         for (let col = 0; col < cols - 1; col++)
-          drawSeg(pts[row][col], pts[row][col + 1], prox[row][col], prox[row][col + 1]);
+          addSeg(pts[row][col], pts[row][col + 1], prox[row][col], prox[row][col + 1]);
       for (let col = 0; col < cols; col++)
         for (let row = 0; row < rows - 1; row++)
-          drawSeg(pts[row][col], pts[row + 1][col], prox[row][col], prox[row + 1][col]);
+          addSeg(pts[row][col], pts[row + 1][col], prox[row][col], prox[row + 1][col]);
 
+      ctx.lineCap = 'butt';
+      for (let b = 0; b < BUCKETS; b++) {
+        const t = b / (BUCKETS - 1);
+        ctx.strokeStyle = lerpColor(LINE_BASE, LINE_ACTIVE, t);
+        ctx.lineWidth = lerpN(0.8, 1.5, t);
+        ctx.stroke(linePaths[b]);
+      }
+
+      // Same batching for nodes, plus a flat (non-gradient) glow pass for the
+      // handful of nodes near the cursor.
+      const nodePaths: Path2D[] = Array.from({ length: BUCKETS }, () => new Path2D());
+      const glowPath = new Path2D();
       for (let row = 0; row < rows; row++) {
         for (let col = 0; col < cols; col++) {
           const p = pts[row][col];
-          const pr = prox[row][col];
-          const t = pr * pr * (3 - 2 * pr);
+          const t = smoothstep(prox[row][col]);
           const r = lerpN(NODE_BASE_RADIUS, NODE_ACTIVE_RADIUS, t);
-
+          nodePaths[bucketOf(t)].arc(p.x, p.y, r, 0, Math.PI * 2);
           if (t > 0.3) {
             const glowR = r + lerpN(0, 6, (t - 0.3) / 0.7);
-            const grd = ctx.createRadialGradient(p.x, p.y, r * 0.5, p.x, p.y, glowR);
-            grd.addColorStop(0, `rgba(${GLOW},${(t * 0.32).toFixed(3)})`);
-            grd.addColorStop(1, `rgba(${GLOW},0)`);
-            ctx.beginPath();
-            ctx.arc(p.x, p.y, glowR, 0, Math.PI * 2);
-            ctx.fillStyle = grd;
-            ctx.fill();
+            glowPath.arc(p.x, p.y, glowR, 0, Math.PI * 2);
           }
-
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
-          ctx.fillStyle = lerpColor(NODE_BASE, NODE_ACTIVE, t);
-          ctx.fill();
         }
+      }
+
+      ctx.fillStyle = `rgba(${GLOW},0.10)`;
+      ctx.fill(glowPath);
+      for (let b = 0; b < BUCKETS; b++) {
+        const t = b / (BUCKETS - 1);
+        ctx.fillStyle = lerpColor(NODE_BASE, NODE_ACTIVE, t);
+        ctx.fill(nodePaths[b]);
       }
 
       for (const r of ripples) {
@@ -242,7 +269,11 @@ export default function LiveBackground() {
       const t = targetMouseRef.current;
       m.x = lerpN(m.x, t.x, LERP_SPEED);
       m.y = lerpN(m.y, t.y, LERP_SPEED);
-      draw(now);
+
+      if (now - lastDrawRef.current >= FRAME_INTERVAL) {
+        draw(now);
+        lastDrawRef.current = now;
+      }
       rafRef.current = requestAnimationFrame(animate);
     },
     [draw],
@@ -253,10 +284,24 @@ export default function LiveBackground() {
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
 
+    const buildDotPattern = () => {
+      if (!ctx) return;
+      const tile = document.createElement('canvas');
+      tile.width = DOT_SPACING;
+      tile.height = DOT_SPACING;
+      const tctx = tile.getContext('2d');
+      if (!tctx) return;
+      tctx.fillStyle = 'rgba(233,233,228,0.05)';
+      tctx.beginPath();
+      tctx.arc(DOT_SPACING / 2, DOT_SPACING / 2, 0.8, 0, Math.PI * 2);
+      tctx.fill();
+      dotPatternRef.current = ctx.createPattern(tile, 'repeat');
+    };
+
     const setSize = () => {
       const w = window.innerWidth;
       const h = window.innerHeight;
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
       canvas.width = Math.round(w * dpr);
       canvas.height = Math.round(h * dpr);
       canvas.style.width = `${w}px`;
@@ -264,6 +309,7 @@ export default function LiveBackground() {
       // Draw in CSS pixels; the backing store is DPR-scaled for crispness.
       ctx?.setTransform(dpr, 0, 0, dpr, 0, 0);
       sizeRef.current = { w, h };
+      buildDotPattern();
     };
 
     setSize();

@@ -53,49 +53,28 @@ export default function SpecimenBanner() {
           <span className="mt-1 lab-label text-ash">ID PENDING</span>
         </div>
 
-        <div className="relative flex-1">
+        <div className="relative flex-1 overflow-hidden">
+          {/* Static trace — drawn once, never repainted. No filters, no SMIL:
+              those forced a full-region blur re-rasterization every frame. */}
           <svg
             viewBox={`0 0 ${TOTAL} 140`}
             preserveAspectRatio="none"
             className="h-24 w-full sm:h-28"
           >
-            <defs>
-              <filter id="pulseGlow" x="-20%" y="-40%" width="140%" height="180%">
-                <feGaussianBlur stdDeviation="2.2" result="b" />
-                <feMerge>
-                  <feMergeNode in="b" />
-                  <feMergeNode in="SourceGraphic" />
-                </feMerge>
-              </filter>
-            </defs>
-
-            {/* faint scope grid */}
             {gridLines.map((x) => (
               <line key={x} x1={x} y1="8" x2={x} y2="132" stroke="#1c1c20" strokeWidth="0.6" />
             ))}
             <line x1="0" y1={BASE} x2={TOTAL} y2={BASE} stroke="#1c1c20" strokeWidth="0.6" />
-
-            {/* ghost trace */}
-            <path d={d} fill="none" stroke="rgba(233,233,228,0.14)" strokeWidth="1" />
-
-            {/* sweeping comet tail */}
-            <path
-              d={d}
-              pathLength={1000}
-              fill="none"
-              stroke="#e5484d"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-              strokeDasharray="46 954"
-              filter="url(#pulseGlow)"
-              className="animate-sweep"
-            />
-
-            {/* glowing head */}
-            <circle r="3.6" fill="#ff9a9d" filter="url(#pulseGlow)">
-              <animateMotion dur="4.5s" repeatCount="indefinite" rotate="auto" path={d} />
-            </circle>
+            <path d={d} fill="none" stroke="rgba(233,233,228,0.16)" strokeWidth="1" />
           </svg>
+
+          {/* Comet — a single compositor-only element (transform+opacity via
+              `left` on one node is negligible; box-shadow gives the glow
+              without an SVG filter pass). */}
+          <span
+            aria-hidden
+            className="animate-comet pointer-events-none absolute top-1/2 h-[7px] w-[7px] -translate-y-1/2 rounded-full bg-[#ff9a9d] shadow-[0_0_10px_3px_rgba(229,72,77,0.55)]"
+          />
 
           <span className="lab-label absolute right-3 top-2 text-faint">SIGNAL // ACQUIRING</span>
         </div>
