@@ -35,9 +35,9 @@ interface Ripple {
   born: number;
 }
 
-const CELL_SIZE = 100;
-const INFLUENCE_RADIUS = 260;
-const MAX_WARP = 24;
+const CELL_SIZE = 82;
+const INFLUENCE_RADIUS = 220;
+const MAX_WARP = 15;
 const DOT_SPACING = 30;
 const LERP_SPEED = 0.09;
 const MAX_DPR = 1.5;
@@ -50,9 +50,9 @@ const BUCKETS = 5;
 // CT palette
 const BG = '#080809';
 const LINE_BASE = { r: 233, g: 233, b: 228, a: 0.08 }; // faint bone
-const LINE_ACTIVE = { r: 229, g: 72, b: 77, a: 0.92 }; // signal red
+const LINE_ACTIVE = { r: 229, g: 72, b: 77, a: 0.58 }; // signal red — kept subtle so it never fights foreground text
 const NODE_BASE = { r: 233, g: 233, b: 228, a: 0.16 };
-const NODE_ACTIVE = { r: 255, g: 138, b: 141, a: 1 };
+const NODE_ACTIVE = { r: 255, g: 138, b: 141, a: 0.85 };
 const GLOW = '229,72,77';
 const RIPPLE = '229,72,77';
 
@@ -243,7 +243,7 @@ export default function LiveBackground() {
         }
       }
 
-      ctx.fillStyle = `rgba(${GLOW},0.10)`;
+      ctx.fillStyle = `rgba(${GLOW},0.06)`;
       ctx.fill(glowPath);
       for (let b = 0; b < BUCKETS; b++) {
         const t = b / (BUCKETS - 1);
@@ -353,7 +353,7 @@ export default function LiveBackground() {
     <canvas
       ref={canvasRef}
       aria-hidden
-      className="pointer-events-none fixed inset-0 -z-10 h-full w-full"
+      className="pointer-events-none fixed inset-0 -z-10 h-full w-full opacity-70"
     />
   );
 }

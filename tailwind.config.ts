@@ -74,10 +74,21 @@ const config: Config = {
           '50%': { transform: 'scaleY(1)' },
         },
         comet: {
-          '0%': { left: '-4%', opacity: '0' },
-          '8%': { opacity: '1' },
-          '90%': { opacity: '1' },
-          '100%': { left: '104%', opacity: '0' },
+          // Position only — the "beat" itself lives in `heartbeat` below, on
+          // a different property, so the two can run together with no
+          // conflict. Both are transform/opacity/left: compositor-cheap.
+          '0%': { left: '-4%' },
+          '100%': { left: '104%' },
+        },
+        heartbeat: {
+          // A quick lub-dub pulse rather than a smooth constant glow.
+          // Keeps the element's own translateY(-50%) centering intact —
+          // a raw `transform` here would otherwise silently replace it.
+          '0%, 100%': { transform: 'translateY(-50%) scale(1)', opacity: '0.55' },
+          '10%': { transform: 'translateY(-50%) scale(1.8)', opacity: '1' },
+          '20%': { transform: 'translateY(-50%) scale(1)', opacity: '0.55' },
+          '30%': { transform: 'translateY(-50%) scale(1.4)', opacity: '0.85' },
+          '45%': { transform: 'translateY(-50%) scale(1)', opacity: '0.5' },
         },
       },
       animation: {
@@ -90,7 +101,7 @@ const config: Config = {
         wobble3d: 'wobble3d 9s ease-in-out infinite',
         track: 'track 2.8s ease-in-out infinite',
         eq: 'eq 1.1s ease-in-out infinite',
-        comet: 'comet 3.4s linear infinite',
+        comet: 'comet 3.4s linear infinite, heartbeat 1.05s ease-in-out infinite',
       },
     },
   },
